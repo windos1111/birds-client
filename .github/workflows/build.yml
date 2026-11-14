@@ -16,21 +16,40 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Download source code
+      - name: Download repository
         uses: actions/checkout@v4
+
+      - name: Restore app source files
+        shell: pwsh
+        run: |
+          $archive = "Birds-Client-Portable-EXE-Source.zip"
+          $extractPath = Join-Path $env:RUNNER_TEMP "birds-client-source"
+          Expand-Archive -LiteralPath $archive -DestinationPath $extractPath -Force
+          $sourceRoot = Join-Path $extractPath "Birds-Client"
+          if (!(Test-Path "$sourceRoot/src/index.html")) {
+            throw "Source files missing from archive"
+          }
+          Copy-Item "$sourceRoot/src" $env:GITHUB_WORKSPACE -Recurse -Force
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Install project dependencies
+      - name: Install dependencies
         run: npm install
 
-      - name: Build Windows executable
+      - name: Verify source
+        shell: pwsh
+        run: |
+          if (!(Test-Path "src/index.html")) { throw "index.html missing" }
+          if (!(Test-Path "src/app.js")) { throw "app.js missing" }
+          if (!(Test-Path "src/style.css")) { throw "style.css missing" }
+
+      - name: Build EXE
         run: npm run dist -- --publish never
 
-      - name: Upload Birds Client EXE
+      - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
           name: Birds-Client-Windows
