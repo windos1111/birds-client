@@ -1,5 +1,5 @@
 
-name: Build Birds Client portable EXE
+name: Build EZFROST Windows EXE
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Birds Client
+    name: Build EZFROST
     runs-on: windows-latest
 
     steps:
@@ -23,13 +23,41 @@ jobs:
         shell: pwsh
         run: |
           $archive = "Birds-Client-Portable-EXE-Source.zip"
-          $extractPath = Join-Path $env:RUNNER_TEMP "birds-client-source"
-          Expand-Archive -LiteralPath $archive -DestinationPath $extractPath -Force
-          $sourceRoot = Join-Path $extractPath "Birds-Client"
-          if (!(Test-Path "$sourceRoot/src/index.html")) {
-            throw "Source files missing from archive"
+
+          if (!(Test-Path $archive)) {
+            throw "Source ZIP file was not found"
           }
-          Copy-Item "$sourceRoot/src" $env:GITHUB_WORKSPACE -Recurse -Force
+
+          $extractPath = Join-Path $env:RUNNER_TEMP "ezfrost-source"
+
+          Expand-Archive -LiteralPath $archive -DestinationPath $extractPath -Force
+
+          $possibleFolders = @(
+            (Join-Path $extractPath "Birds-Client"),
+            $extractPath
+          )
+
+          $sourceRoot = $null
+
+          foreach ($folder in $possibleFolders) {
+            if (Test-Path (Join-Path $folder "src/index.html")) {
+              $sourceRoot = $folder
+              break
+            }
+          }
+
+          if (!$sourceRoot) {
+            throw "Could not find src/index.html inside the ZIP"
+          }
+
+          $source = Join-Path $sourceRoot "src"
+          $destination = Join-Path $env:GITHUB_WORKSPACE "src"
+
+          if (Test-Path $destination) {
+            Remove-Item $destination -Recurse -Force
+          }
+
+          Copy-Item $source -Destination $destination -Recurse -Force
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -39,20 +67,30 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Verify source
+      - name: Verify source files
         shell: pwsh
         run: |
-          if (!(Test-Path "src/index.html")) { throw "index.html missing" }
-          if (!(Test-Path "src/app.js")) { throw "app.js missing" }
-          if (!(Test-Path "src/style.css")) { throw "style.css missing" }
+          $files = @(
+            "src/index.html",
+            "src/app.js",
+            "src/style.css"
+          )
 
-      - name: Build EXE
+          foreach ($file in $files) {
+            if (!(Test-Path $file)) {
+              throw "Missing file: $file"
+            }
+          }
+
+          Write-Host "EZFROST source files restored successfully!"
+
+      - name: Build Windows EXE
         run: npm run dist -- --publish never
 
-      - name: Upload EXE
+      - name: Upload EZFROST EXE
         uses: actions/upload-artifact@v4
         with:
-          name: Birds-Client-Windows
+          name: EZFROST-Windows
           path: dist/*.exe
           if-no-files-found: error
           retention-days: 7
