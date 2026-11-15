@@ -1,5 +1,5 @@
 
-name: EZFROST - Windows Build
+name: EZFROST Windows Build
 
 on:
   workflow_dispatch:
@@ -12,19 +12,18 @@ permissions:
 
 jobs:
   build:
-    name: Build EZFROST
+    name: Build EZFROST Installer
     runs-on: windows-latest
     timeout-minutes: 30
 
     steps:
-      - name: Get source code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       - name: Restore EZFROST source
         shell: pwsh
@@ -32,11 +31,12 @@ jobs:
           $archive = "Birds-Client-Portable-EXE-Source.zip"
 
           if (!(Test-Path $archive)) {
-            throw "Source ZIP is missing from the repository."
+            throw "Source ZIP not found in repository root."
           }
 
-          $extract = Join-Path $env:RUNNER_TEMP "ezfrost"
-          Expand-Archive $archive $extract -Force
+          $extract = Join-Path $env:RUNNER_TEMP "ezfrost-source"
+
+          Expand-Archive -LiteralPath $archive -DestinationPath $extract -Force
 
           $sourceRoot = $extract
 
@@ -44,8 +44,16 @@ jobs:
             $sourceRoot = Join-Path $extract "Birds-Client"
           }
 
-          if (!(Test-Path (Join-Path $sourceRoot "src/index.html"))) {
-            throw "Could not find src/index.html in the ZIP."
+          $requiredSource = @(
+            "src/index.html",
+            "src/app.js",
+            "src/style.css"
+          )
+
+          foreach ($file in $requiredSource) {
+            if (!(Test-Path (Join-Path $sourceRoot $file))) {
+              throw "Missing source file in ZIP: $file"
+            }
           }
 
           if (Test-Path "src") {
@@ -54,12 +62,12 @@ jobs:
 
           Copy-Item (Join-Path $sourceRoot "src") "." -Recurse -Force
 
-          Write-Host "EZFROST source restored."
+          Write-Host "EZFROST source restored successfully."
 
-      - name: Verify project
+      - name: Verify project files
         shell: pwsh
         run: |
-          $required = @(
+          $files = @(
             "package.json",
             "main.js",
             "preload.js",
@@ -68,13 +76,13 @@ jobs:
             "src/style.css"
           )
 
-          foreach ($file in $required) {
+          foreach ($file in $files) {
             if (!(Test-Path $file)) {
-              throw "Missing required file: $file"
+              throw "Required file missing: $file"
             }
           }
 
-          Write-Host "All project files found."
+          Write-Host "All required files are present."
 
       - name: Install dependencies
         shell: pwsh
@@ -89,7 +97,7 @@ jobs:
             throw "Dependency installation failed."
           }
 
-      - name: Build EZFROST
+      - name: Build Windows installer
         shell: pwsh
         run: |
           npm run dist -- --publish never
@@ -98,22 +106,22 @@ jobs:
             throw "EZFROST build failed."
           }
 
-      - name: Check build output
+      - name: Verify installer
         shell: pwsh
         run: |
           if (!(Test-Path "dist")) {
-            throw "Build output folder was not created."
+            throw "Dist folder was not created."
           }
 
-          $files = Get-ChildItem "dist" -Filter "*.exe" -File
+          $installers = Get-ChildItem "dist" -Filter "*.exe" -File
 
-          if ($files.Count -eq 0) {
-            throw "No Windows EXE files were created."
+          if ($installers.Count -eq 0) {
+            throw "No EXE installer was generated."
           }
 
-          Get-ChildItem "dist" -File | Select-Object Name, Length
+          $installers | Select-Object Name, Length
 
-      - name: Upload EZFROST installer
+      - name: Upload EZFROST Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: EZFROST-Windows-Installer
@@ -121,7 +129,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload build files
+      - name: Upload additional build files
         uses: actions/upload-artifact@v4
         with:
           name: EZFROST-Build-Files
