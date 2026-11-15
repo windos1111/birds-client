@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build EZFROST Installer
+    name: Build EZFROST
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -25,79 +25,105 @@ jobs:
         with:
           node-version: 22
 
-      - name: Restore EZFROST source
+      - name: Find source ZIP
         shell: pwsh
         run: |
-          $archive = "Birds-Client-Portable-EXE-Source.zip"
+          $workspace = $env:GITHUB_WORKSPACE
 
-          if (!(Test-Path $archive)) {
-            throw "Source ZIP not found in repository root."
+          $preferred = Join-Path $workspace "Birds-Client-Portable-EXE-Source (2).zip"
+
+          if (Test-Path -LiteralPath $preferred) {
+            $archive = $preferred
+          } else {
+            $archives = @(Get-ChildItem -LiteralPath $workspace -File -Filter "Birds-Client-Portable-EXE-Source*.zip")
+
+            if ($archives.Count -ne 1) {
+              Write-Host "ZIP files found:"
+              Get-ChildItem $workspace -Filter "*.zip" | ForEach-Object { Write-Host $_.Name }
+              throw "Could not identify exactly one source ZIP."
+            }
+
+            $archive = $archives[0].FullName
           }
+
+          Write-Host "Using archive: $archive"
 
           $extract = Join-Path $env:RUNNER_TEMP "ezfrost-source"
 
-          Expand-Archive -LiteralPath $archive -DestinationPath $extract -Force
-
-          $sourceRoot = $extract
-
-          if (Test-Path (Join-Path $extract "Birds-Client/src/index.html")) {
-            $sourceRoot = Join-Path $extract "Birds-Client"
+          if (Test-Path $extract) {
+            Remove-Item $extract -Recurse -Force
           }
 
-          $requiredSource = @(
+          Expand-Archive -LiteralPath $archive -DestinationPath $extract -Force
+
+          $indexFile = Get-ChildItem -LiteralPath $extract -Filter "index.html" -File -Recurse |
+            Where-Object { $_.Directory.Name -eq "src" } |
+            Select-Object -First 1
+
+          if (!$indexFile) {
+            throw "Could not find src/index.html inside the ZIP."
+          }
+
+          $sourceRoot = Split-Path (Split-Path $indexFile.FullName -Parent) -Parent
+
+          $required = @(
             "src/index.html",
             "src/app.js",
-            "src/style.css"
+            "src/style.css",
+            "src/icon.png"
           )
 
-          foreach ($file in $requiredSource) {
+          foreach ($file in $required) {
             if (!(Test-Path (Join-Path $sourceRoot $file))) {
-              throw "Missing source file in ZIP: $file"
+              throw "Missing source file: $file"
             }
           }
 
-          if (Test-Path "src") {
-            Remove-Item "src" -Recurse -Force
+          $destination = Join-Path $workspace "src"
+
+          if (Test-Path $destination) {
+            Remove-Item $destination -Recurse -Force
           }
 
-          Copy-Item (Join-Path $sourceRoot "src") "." -Recurse -Force
+          Copy-Item (Join-Path $sourceRoot "src") -Destination $workspace -Recurse -Force
 
           Write-Host "EZFROST source restored successfully."
 
-      - name: Verify project files
+      - name: Verify project
         shell: pwsh
         run: |
-          $files = @(
+          $required = @(
             "package.json",
             "main.js",
             "preload.js",
             "src/index.html",
             "src/app.js",
-            "src/style.css"
+            "src/style.css",
+            "src/icon.png"
           )
 
-          foreach ($file in $files) {
+          foreach ($file in $required) {
             if (!(Test-Path $file)) {
-              throw "Required file missing: $file"
+              throw "Missing project file: $file"
             }
           }
 
-          Write-Host "All required files are present."
+          Write-Host "Project verification successful."
 
       - name: Install dependencies
         shell: pwsh
         run: |
           if (Test-Path "package-lock.json") {
-            npm ci
+            npm ci --no-audit --no-fund
           } else {
-            npm install
+            npm install --no-audit --no-fund
           }
 
           if ($LASTEXITCODE -ne 0) {
             throw "Dependency installation failed."
           }
 
-      - name: Build Windows installer
+      - name: Build EZFROST
         shell: pwsh
         run: |
           npm run dist -- --publish never
@@ -106,14 +132,10 @@ jobs:
             throw "EZFROST build failed."
           }
 
-      - name: Verify installer
+      - name: Verify EXE
         shell: pwsh
         run: |
-          if (!(Test-Path "dist")) {
-            throw "Dist folder was not created."
-          }
-
-          $installers = Get-ChildItem "dist" -Filter "*.exe" -File
+          $installers = @(Get-ChildItem "dist" -Filter "*.exe" -File)
 
           if ($installers.Count -eq 0) {
             throw "No EXE installer was generated."
@@ -121,7 +143,7 @@ jobs:
 
           $installers | Select-Object Name, Length
 
-      - name: Upload EZFROST Windows installer
+      - name: Upload EZFROST installer
         uses: actions/upload-artifact@v4
         with:
           name: EZFROST-Windows-Installer
@@ -129,7 +151,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload additional build files
+      - name: Upload build files
         uses: actions/upload-artifact@v4
         with:
           name: EZFROST-Build-Files
