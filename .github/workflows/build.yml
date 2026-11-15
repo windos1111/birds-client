@@ -1,5 +1,5 @@
 
-name: Build EZFROST Windows EXE
+name: EZFROST - Windows Build
 
 on:
   workflow_dispatch:
@@ -14,83 +14,119 @@ jobs:
   build:
     name: Build EZFROST
     runs-on: windows-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Download repository
+      - name: Get source code
         uses: actions/checkout@v4
 
-      - name: Restore app source files
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Restore EZFROST source
         shell: pwsh
         run: |
           $archive = "Birds-Client-Portable-EXE-Source.zip"
 
           if (!(Test-Path $archive)) {
-            throw "Source ZIP file was not found"
+            throw "Source ZIP is missing from the repository."
           }
 
-          $extractPath = Join-Path $env:RUNNER_TEMP "ezfrost-source"
+          $extract = Join-Path $env:RUNNER_TEMP "ezfrost"
+          Expand-Archive $archive $extract -Force
 
-          Expand-Archive -LiteralPath $archive -DestinationPath $extractPath -Force
+          $sourceRoot = $extract
 
-          $possibleFolders = @(
-            (Join-Path $extractPath "Birds-Client"),
-            $extractPath
-          )
-
-          $sourceRoot = $null
-
-          foreach ($folder in $possibleFolders) {
-            if (Test-Path (Join-Path $folder "src/index.html")) {
-              $sourceRoot = $folder
-              break
-            }
+          if (Test-Path (Join-Path $extract "Birds-Client/src/index.html")) {
+            $sourceRoot = Join-Path $extract "Birds-Client"
           }
 
-          if (!$sourceRoot) {
-            throw "Could not find src/index.html inside the ZIP"
+          if (!(Test-Path (Join-Path $sourceRoot "src/index.html"))) {
+            throw "Could not find src/index.html in the ZIP."
           }
 
-          $source = Join-Path $sourceRoot "src"
-          $destination = Join-Path $env:GITHUB_WORKSPACE "src"
-
-          if (Test-Path $destination) {
-            Remove-Item $destination -Recurse -Force
+          if (Test-Path "src") {
+            Remove-Item "src" -Recurse -Force
           }
 
-          Copy-Item $source -Destination $destination -Recurse -Force
+          Copy-Item (Join-Path $sourceRoot "src") "." -Recurse -Force
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          Write-Host "EZFROST source restored."
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Verify source files
+      - name: Verify project
         shell: pwsh
         run: |
-          $files = @(
+          $required = @(
+            "package.json",
+            "main.js",
+            "preload.js",
             "src/index.html",
             "src/app.js",
             "src/style.css"
           )
 
-          foreach ($file in $files) {
+          foreach ($file in $required) {
             if (!(Test-Path $file)) {
-              throw "Missing file: $file"
+              throw "Missing required file: $file"
             }
           }
 
-          Write-Host "EZFROST source files restored successfully!"
+          Write-Host "All project files found."
 
-      - name: Build Windows EXE
-        run: npm run dist -- --publish never
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          if (Test-Path "package-lock.json") {
+            npm ci
+          } else {
+            npm install
+          }
 
-      - name: Upload EZFROST EXE
+          if ($LASTEXITCODE -ne 0) {
+            throw "Dependency installation failed."
+          }
+
+      - name: Build EZFROST
+        shell: pwsh
+        run: |
+          npm run dist -- --publish never
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "EZFROST build failed."
+          }
+
+      - name: Check build output
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist")) {
+            throw "Build output folder was not created."
+          }
+
+          $files = Get-ChildItem "dist" -Filter "*.exe" -File
+
+          if ($files.Count -eq 0) {
+            throw "No Windows EXE files were created."
+          }
+
+          Get-ChildItem "dist" -File | Select-Object Name, Length
+
+      - name: Upload EZFROST installer
         uses: actions/upload-artifact@v4
         with:
-          name: EZFROST-Windows
+          name: EZFROST-Windows-Installer
           path: dist/*.exe
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
+
+      - name: Upload build files
+        uses: actions/upload-artifact@v4
+        with:
+          name: EZFROST-Build-Files
+          path: |
+            dist/*.yml
+            dist/*.blockmap
+          if-no-files-found: ignore
+          retention-days: 14
